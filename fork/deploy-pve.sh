@@ -80,7 +80,7 @@ set -euo pipefail
 cd $REMOTE_DIR
 docker image prune -f >/dev/null
 avail_kb=\$(df --output=avail / | tail -1)
-if [ "\$avail_kb" -lt 3000000 ]; then
+if [ "\$avail_kb" -lt 6000000 ]; then
     echo "[ct] low disk (\${avail_kb} KB), removing images not used by the running container"
     docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -v "^\$(docker inspect risubard --format '{{.Config.Image}}')\$" | xargs -r docker rmi >/dev/null 2>&1 || true
 fi
@@ -137,5 +137,17 @@ EOF
     fail "deploy of ${IMAGE} failed; rolled back to ${PREV_IMAGE} (backup: $BACKUP_FILE)"
 fi
 
-echo "cd $REMOTE_DIR && docker image prune -f >/dev/null; docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}'" | ct
+# Keep the running image and the previous one (for rollback) plus their base
+# images; remove every other RisuBard image.
+ct <<EOF
+keep="${IMAGE} ${PREV_IMAGE} ghcr.io/rpaddict/risubard:${BASE_TAG}"
+prev_base=\$(docker image inspect ${PREV_IMAGE} --format '{{index .Config.Labels "risubard.fork.base"}}' 2>/dev/null || true)
+[ -n "\$prev_base" ] && keep="\$keep ghcr.io/rpaddict/risubard:\$prev_base"
+for img in \$(docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^(risubard-fork|ghcr.io/rpaddict/risubard):'); do
+    case " \$keep " in *" \$img "*) ;; *) docker rmi "\$img" >/dev/null 2>&1 && echo "[ct] removed \$img" ;; esac
+done
+docker image prune -f >/dev/null
+docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+df -h / | tail -1
+EOF
 info "deployed ${IMAGE}"
