@@ -69,9 +69,9 @@ trap 'rm -f "$OVERLAY"' EXIT
 cp "$OVERLAY" ./.Dockerfile.overlay
 
 info "shipping build context"
-tar -czf - --exclude='*.test.ts' --exclude='node_modules' .Dockerfile.overlay "${RUNTIME_PATHS[@]}" \
+tar -czf - --owner=0 --group=0 --exclude='*.test.ts' --exclude='node_modules' .Dockerfile.overlay "${RUNTIME_PATHS[@]}" \
     | "$SSH_BIN" -o BatchMode=yes "$PVE_HOST" \
-      "pct exec $CT_ID -- bash -c 'rm -rf $REMOTE_DIR/build && mkdir -p $REMOTE_DIR/build && tar -xzf - -C $REMOTE_DIR/build'"
+      "pct exec $CT_ID -- bash -c 'rm -rf $REMOTE_DIR/build && mkdir -p $REMOTE_DIR/build && tar -xzf - --no-same-owner -C $REMOTE_DIR/build'"
 rm -f ./.Dockerfile.overlay
 
 info "building image in CT ${CT_ID}"
