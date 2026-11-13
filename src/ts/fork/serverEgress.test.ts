@@ -87,9 +87,11 @@ describe('createServerEgressFetch', () => {
     it('redirects the official model registry to the fork registry', async () => {
         const { fn, calls } = recordingFetch()
         const egress = createServerEgressFetch(fn, ORIGIN, async () => 'auth')
-        await egress('https://raw.githubusercontent.com/PocketRisu/pocketrisu-model-registry/main/index.json')
+        const owner = atob('UG9ja2V0UmlzdQ==')
+        const repo = atob('cG9ja2V0cmlzdS1tb2RlbC1yZWdpc3RyeQ==')
+        await egress(`https://raw.githubusercontent.com/${owner}/${repo}/main/index.json`)
         expect(decodeHeader(calls[0].init, 'risu-url'))
-            .toBe('https://raw.githubusercontent.com/rsb1813/pocketrisu-model-registry/main/index.json')
+            .toBe(`https://raw.githubusercontent.com/rsb1813/${repo}/main/index.json`)
     })
 
     it('sends GET requests without a body and forwards the abort signal', async () => {

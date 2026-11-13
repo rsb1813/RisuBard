@@ -53,10 +53,11 @@ mapfile -t RUNTIME_PATHS < <(sed -nE 's#^COPY --from=builder /app/([^ ]+) .*#\1#
 info "runtime paths: ${RUNTIME_PATHS[*]}"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
-    info "building frontend"
-    NODE_OPTIONS=--max-old-space-size=8192 $PNPM build
+    info "building frontend and server BardWiki bundle"
+    bash fork/build.sh
 fi
 for p in "${RUNTIME_PATHS[@]}"; do [ -e "$p" ] || fail "missing $p (build first)"; done
+[ -f server/node/fork/dist/bardwiki-runner.cjs ] || fail "missing server BardWiki bundle (run fork/build.sh)"
 
 OVERLAY="$(mktemp)"
 trap 'rm -f "$OVERLAY"' EXIT

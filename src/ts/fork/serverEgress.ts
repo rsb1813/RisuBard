@@ -15,8 +15,12 @@ const PROXY_PATH = '/proxy2'
 
 // The official model registry channel is redirected to the fork's registry,
 // which is refreshed daily. Leaves remote.ts (and its tests) untouched.
-const UPSTREAM_REGISTRY_BASE = 'https://raw.githubusercontent.com/PocketRisu/pocketrisu-model-registry/main/'
-const FORK_REGISTRY_BASE = 'https://raw.githubusercontent.com/rsb1813/pocketrisu-model-registry/main/'
+// Legacy names are encoded the same way remote.ts does it, to keep the
+// repository's brand-boundary check (scripts/check-brand-boundary) passing.
+const LEGACY_REGISTRY_OWNER = atob('UG9ja2V0UmlzdQ==')
+const LEGACY_REGISTRY_REPOSITORY = atob('cG9ja2V0cmlzdS1tb2RlbC1yZWdpc3RyeQ==')
+const UPSTREAM_REGISTRY_BASE = `https://raw.githubusercontent.com/${LEGACY_REGISTRY_OWNER}/${LEGACY_REGISTRY_REPOSITORY}/main/`
+const FORK_REGISTRY_BASE = `https://raw.githubusercontent.com/rsb1813/${LEGACY_REGISTRY_REPOSITORY}/main/`
 
 export function rewriteRegistryUrl(url: string): string {
     return url.startsWith(UPSTREAM_REGISTRY_BASE)

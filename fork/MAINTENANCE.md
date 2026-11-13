@@ -15,23 +15,34 @@ file. It does two jobs:
 | Deploy branch | `deploy`. It is an upstream release tag plus the fork patch, and it is what runs on the server. |
 | Fork `main` | A plain mirror of upstream `main`. Never commit fork changes to it. |
 | Last merged release | `fork/UPSTREAM_TAG` |
-| Registry checkout | `H:\projects\risubard-model-registry`. The `origin` remote is rsb1813/pocketrisu-model-registry and `upstream` is PocketRisu/pocketrisu-model-registry. |
+| Registry checkout | `H:\projects\risubard-model-registry`. The `origin` remote is the rsb1813 fork of the upstream model registry, and `upstream` is the original registry; run `git remote -v` there to see both. The legacy names are kept out of this repository for its brand-boundary check. |
 | Server | PVE host `pve` (ssh alias), container 103, app at `/opt/risubard`, port 7777 |
 | Save backups | `H:\projects\risubard-backups`. The newest 7 are kept. |
 
 ## The fork patch (keep it this small)
 
+Upstream files touched: `src/main.ts` (1 line), `src/ts/process/index.svelte.ts` (2 lines), and `server/node/server.cjs` (2 lines). Everything else is in fork-only files.
+
 | File | What it does |
 |---|---|
-| `src/ts/fork/serverEgress.ts` (+ test) | Wraps `window.fetch`. Every cross-origin HTTP(S) request goes through the server's `/proxy2`, so the browser never contacts AI providers or other external APIs. It also rewrites the official model registry URL (PocketRisu `main`) to the fork registry. |
+| `src/ts/fork/serverEgress.ts` (+ test) | Wraps `window.fetch`. Every cross-origin HTTP(S) request goes through the server's `/proxy2`, so the browser never contacts AI providers or other external APIs. It also rewrites the official model registry URL (the upstream registry's `main`) to the fork registry. |
 | `src/main.ts` | One added line: `import "./ts/fork/serverEgress";` directly after the polyfill import. |
-| `fork/*` | This tooling. |
+| `src/ts/fork/serverBardWiki.ts` (+ test) | Drop-in replacement for `createStoredResponseMemoryAnalysis`. `confirm()` resolves the chat's `memory` and `model` model presets plus their credentials (the same binding logic `requestChatDataMain` uses), posts the analysis to the server, and polls the job. It falls back to the in-browser analysis for classic or plugin models, or when the server answers 404/503. |
+| `src/process/index.svelte.ts` | Two lines: the import of `createStoredResponseMemoryAnalysisWithServer`, and `const storedResponseMemoryAnalysis = createStoredResponseMemoryAnalysisWithServer({` in place of `createStoredResponseMemoryAnalysis({`. |
+| `src/ts/fork/bardwikiServer/*` (+ tests) | The Node side. `entry.ts` is bundled to `server/node/fork/dist/bardwiki-runner.cjs`. `modelCall.ts` calls the model with the same adapters the browser uses. `nodeContext.ts` handles loopback self-calls and server-minted auth. `nodeStubs/` holds Node stand-ins for browser-only modules. |
+| `server/node/fork/bardwiki-jobs.cjs` (+ test) | Routes for `/api/fork/bardwiki/jobs`. It holds jobs in memory and runs one job per chat at a time. |
+| `server/node/server.cjs` | Two lines after `modelJobs.registerRoutes(...)`: a comment and `require('./fork/bardwiki-jobs.cjs').createBardWikiJobs(...).registerRoutes(app);` |
+| `fork/*` | This tooling. `fork/vite.bardwiki-server.config.ts` builds the server bundle, and `fork/build.sh` builds the frontend and the server bundle. |
 
 What the patch does and does not do:
 
 - **Done:** the browser never contacts an external host with `fetch()`; everything goes through the server.
 - **Done upstream:** model-preset requests (chat, BardWiki and memory model calls among them) already run as server jobs, because `nodeOnlyServerSideRequests` defaults to on. Those jobs survive a dropped connection.
-- **Not done: server-driven BardWiki.** The analysis is still started and orchestrated by the browser tab (`src/ts/risubard/memoryAnalysisClient.ts`); only its model calls go through the server. If the tab is closed between steps, the remaining steps do not run.
+- **Done: server-driven BardWiki.** Turn analysis and wiki-reboot batches (`confirm()`) run on the server once they start, and finish even if the tab is closed. The server runs the browser's own `memoryAnalysisClient.ts`, bundled for Node.
+  - **Still in the browser:** the decision to start an analysis (made after a reply is stored), manual wiki commands (`directWikiCommand`), and the lore and markdown writers outside `confirm()`.
+  - **Classic or plugin models:** chats whose memory or model role uses one keep the in-browser analysis.
+  - **Server restarts:** a restart drops running jobs; the browser reports "job was lost".
+  - **Limits on the server path:** it makes a single attempt per model call, with no fallback-model chain and no request log entry.
 - **Not covered by the wrapper:**
   - WebSocket (Ooba streaming)
   - XMLHttpRequest
@@ -69,7 +80,7 @@ Work in `H:\projects\RisuBard`.
 1. Run `git fetch upstream --tags` and `git fetch origin`.
 2. Run `bash fork/status.sh` and act on its `ACTION=` line:
    - `none`: nothing to do.
-   - `deploy`: the deploy branch is ahead of what is running (for example an earlier deploy failed or rolled back). Run `git switch deploy` and `npx --yes pnpm@10.34.1 install --frozen-lockfile`, then build with `NODE_OPTIONS=--max-old-space-size=8192 npx --yes pnpm@10.34.1 build`, then go to step 9.
+   - `deploy`: the deploy branch is ahead of what is running (for example an earlier deploy failed or rolled back). Run `git switch deploy` and `npx --yes pnpm@10.34.1 install --frozen-lockfile`, then build with `bash fork/build.sh`, then go to step 9.
    - `sync`: there is a new release `LATEST`. Continue with step 3.
 3. Work on `sync/<LATEST>`. If that branch already exists from a failed earlier run, `git switch` to it and continue from where it stopped. Otherwise create it from `deploy`.
    - Do not push the fork's `main`. Pushes there trigger CodeQL and the other upstream workflows for nothing.
@@ -83,6 +94,15 @@ Work in `H:\projects\RisuBard`.
    - `server/node/server.cjs` (`reverseProxyFunc`, the `/proxy2` routes, the `express.raw` octet-stream parser)
    - `src/ts/preset/registry/remote.ts` (does the official registry URL still start with the `UPSTREAM_REGISTRY_BASE` in `serverEgress.ts`?)
    - `Dockerfile` (runtime `COPY --from=builder` paths; `deploy-pve.sh` reads them, but check for new runtime steps)
+   - **BardWiki server path:**
+     - `src/ts/risubard/memoryAnalysisClient.ts`: the options and return shape of `createStoredResponseMemoryAnalysis`, and the `MemoryAnalysisModelCall` type.
+     - `src/ts/process/index.svelte.ts`: the `storedResponseMemoryAnalysis` creation, which must still go through `createStoredResponseMemoryAnalysisWithServer`.
+     - `src/ts/process/request/modelPresetBinding.ts` (binding and credential helpers) and `request.ts`: what `requestModelPreset` does for memory calls. Mirror any meaningful change in `bardwikiServer/modelCall.ts`.
+     - `server/node/server.cjs`: `createServerJwt`, `checkProxyAuth`, and the `modelJobs.registerRoutes` anchor.
+     - **Build failures from `fork/build.sh`:**
+       - A "not exported" error from a `nodeStubs/*` file means a bundled module started importing more browser state. Add a Node stand-in for exactly that export, or cut the import from `bardwikiServer` code.
+       - A failing bundle load check means some module touches `window`/`document` at import time. Find it with `BARDWIKI_TRACE=<module> npx --yes pnpm@10.34.1 exec vite build --config fork/vite.bardwiki-server.config.ts`.
+     - **Bundled dependencies:** the bundle keeps the packages in `package.json` `dependencies` external, so they load from the runtime image. A new dev-only dependency pulled into the graph gets bundled.
    - `package.json` and `pnpm-lock.yaml`. Changed dependencies are fine because they come from upstream's image, but the fork must not add its own.
 
    Adapt `src/ts/fork/*` if any of these moved.

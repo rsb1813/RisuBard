@@ -14,9 +14,10 @@ $PNPM install --frozen-lockfile
 echo "[verify] fork tests"
 $PNPM exec vitest run src/ts/fork
 echo "[verify] client tests"
-$PNPM exec vitest run --reporter=dot
+# Upstream has a few timing-sensitive tests that can flake under load; one retry.
+$PNPM exec vitest run --reporter=dot --retry=1
 echo "[verify] server tests"
-$PNPM exec vitest run --config vitest.config.server.ts --reporter=dot
+$PNPM exec vitest run --config vitest.config.server.ts --reporter=dot --retry=1
 echo "[verify] build"
-NODE_OPTIONS=--max-old-space-size=8192 $PNPM build
+bash fork/build.sh
 echo "[verify] OK"

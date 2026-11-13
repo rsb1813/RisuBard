@@ -3704,6 +3704,8 @@ app.delete('/proxy-stream-jobs/:jobId', async (req, res) => {
 const { createModelJobs } = require('./model-jobs.cjs');
 const modelJobs = createModelJobs({ saveDir: savePath, logger });
 modelJobs.registerRoutes(app, { auth: checkProxyAuth });
+// Fork patch: server-driven BardWiki analysis (server/node/fork/bardwiki-jobs.cjs).
+require('./fork/bardwiki-jobs.cjs').createBardWikiJobs({ auth: checkProxyAuth, createAuth: async () => createServerJwt(), logger }).registerRoutes(app);
 
 // app.get('/api/password', async(req, res)=> {
 //     if(password === ''){

@@ -39,6 +39,7 @@ import { getModuleAssets, getModuleLorebooksWithSources, getModuleToggles } from
 import { forageStorage, readImage, refreshLiveFiles } from "../globalApi.svelte";
 import { chatGenKey, chatProcessStage, endGeneration, isChatGenerating, setGenerationStage, startGeneration } from "./generationState";
 import { waitForSendSync } from './sendPreparation';
+import { createStoredResponseMemoryAnalysisWithServer } from '../fork/serverBardWiki';
 import {
     buildBoundedNarrativeInquiryFallback,
     createStoredResponseMemoryAnalysis,
@@ -240,7 +241,7 @@ function boundedMemoryAnalysisError(error: unknown): string {
         .slice(0, 1024)
 }
 
-const storedResponseMemoryAnalysis = createStoredResponseMemoryAnalysis({
+const storedResponseMemoryAnalysis = createStoredResponseMemoryAnalysisWithServer({
     requestModel: requestChatData,
     fetchImpl: fetch,
     createAuth: () => forageStorage.createAuth(),
