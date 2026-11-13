@@ -1,4 +1,5 @@
 import "./ts/polyfill";
+import "./ts/fork/serverEgress";
 import "./styles.css";
 import "./styles/nodeonly-standard.css";
 import "core-js/actual"
