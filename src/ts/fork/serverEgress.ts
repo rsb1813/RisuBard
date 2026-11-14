@@ -60,10 +60,46 @@ async function createAuth(): Promise<string> {
     return createAuthImpl()
 }
 
+// Headers and query parameters that carry a credential. A request with one of
+// these is never sent from the browser, even when no server token exists yet.
+const CREDENTIAL_HEADERS = ['authorization', 'x-api-key', 'api-key', 'x-goog-api-key', 'proxy-authorization', 'cookie']
+const CREDENTIAL_QUERY = ['key', 'api_key', 'apikey', 'token', 'access_token']
+
+export function carriesCredential(url: URL, headers: Record<string, string>): boolean {
+    const names = Object.keys(headers).map((name) => name.toLowerCase())
+    return CREDENTIAL_HEADERS.some((name) => names.includes(name))
+        || CREDENTIAL_QUERY.some((name) => url.searchParams.has(name))
+}
+
+// The app gets its server token only after login; until then createAuth()
+// resolves to ''. Requests made during startup (the model registry sync, for
+// example) wait for the login instead of reaching /proxy2 without a token.
+export async function waitForAuth(
+    getAuth: CreateAuth,
+    timeoutMs: number,
+    sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    signal?: AbortSignal | null,
+): Promise<string> {
+    let delay = 250
+    let waited = 0
+    for (;;) {
+        let token = ''
+        try { token = await getAuth() } catch { token = '' }
+        if (token) return token
+        if (waited >= timeoutMs || signal?.aborted) return ''
+        await sleep(delay)
+        waited += delay
+        delay = Math.min(delay * 2, 2_000)
+    }
+}
+
+const AUTH_WAIT_MS = 15_000
+
 export function createServerEgressFetch(
     nativeFetch: typeof fetch,
     pageOrigin: string,
     getAuth: CreateAuth = createAuth,
+    authWaitMs = AUTH_WAIT_MS,
 ): typeof fetch {
     return (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         const rawUrl = input instanceof Request ? input.url : String(input)
@@ -90,10 +126,30 @@ export function createServerEgressFetch(
             ? undefined
             : new Uint8Array(await request.arrayBuffer())
 
+        const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
+        const target = rewriteRegistryUrl(url.toString())
+        const token = await waitForAuth(getAuth, authWaitMs, undefined, signal)
+        if (!token) {
+            // Not logged in. A public request without credentials may go out
+            // directly (as upstream does); anything carrying a key must not.
+            if (!carriesCredential(url, headers)) {
+                return nativeFetch(target, {
+                    method,
+                    headers,
+                    body: body && body.byteLength > 0 ? body : undefined,
+                    signal,
+                })
+            }
+            return new Response(JSON.stringify({ error: 'Not logged in to the RisuBard server yet; request not sent.' }), {
+                status: 401,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        }
+
         const proxyHeaders: Record<string, string> = {
-            'risu-url': encodeURIComponent(rewriteRegistryUrl(url.toString())),
+            'risu-url': encodeURIComponent(target),
             'risu-header': encodeURIComponent(JSON.stringify(headers)),
-            'risu-auth': await getAuth(),
+            'risu-auth': token,
         }
         if (body && body.byteLength > 0) {
             // The server only keeps the raw bytes for octet-stream; the real
@@ -105,7 +161,7 @@ export function createServerEgressFetch(
             method,
             headers: proxyHeaders,
             body: body && body.byteLength > 0 ? body : undefined,
-            signal: init?.signal ?? (input instanceof Request ? input.signal : undefined),
+            signal,
         })
     }) as typeof fetch
 }

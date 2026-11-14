@@ -94,6 +94,36 @@ describe('createServerEgressFetch', () => {
             .toBe(`https://raw.githubusercontent.com/rsb1813/${repo}/main/index.json`)
     })
 
+    it('waits for the login token instead of calling /proxy2 without one', async () => {
+        const { fn, calls } = recordingFetch()
+        const tokens = ['', '', 'late-token']
+        const egress = createServerEgressFetch(fn, ORIGIN, async () => tokens.shift() ?? 'late-token', 5_000)
+        vi.useFakeTimers()
+        const pending = egress('https://openrouter.ai/api/v1/models')
+        await vi.advanceTimersByTimeAsync(1_000)
+        await pending
+        vi.useRealTimers()
+        expect(calls[0].input).toBe('/proxy2')
+        expect((calls[0].init?.headers as Record<string, string>)['risu-auth']).toBe('late-token')
+    })
+
+    it('without a token, sends public requests directly but never ones with a key', async () => {
+        const { fn, calls } = recordingFetch()
+        const egress = createServerEgressFetch(fn, ORIGIN, async () => '', 0)
+        const owner = atob('UG9ja2V0UmlzdQ==')
+        const repo = atob('cG9ja2V0cmlzdS1tb2RlbC1yZWdpc3RyeQ==')
+        await egress(`https://raw.githubusercontent.com/${owner}/${repo}/main/index.json`)
+        expect(calls[0].input).toBe(`https://raw.githubusercontent.com/rsb1813/${repo}/main/index.json`)
+
+        const res = await egress('https://api.openai.com/v1/chat/completions', {
+            method: 'POST', headers: { Authorization: 'Bearer sk-test' }, body: '{}',
+        })
+        expect(res.status).toBe(401)
+        const keyed = await egress('https://generativelanguage.googleapis.com/v1beta/models?key=AIza-test')
+        expect(keyed.status).toBe(401)
+        expect(calls).toHaveLength(1)
+    })
+
     it('sends GET requests without a body and forwards the abort signal', async () => {
         const { fn, calls } = recordingFetch()
         const egress = createServerEgressFetch(fn, ORIGIN, async () => 'auth')
