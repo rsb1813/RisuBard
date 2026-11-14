@@ -63,10 +63,26 @@ Work in `H:\projects\risubard-model-registry`. Follow its `MAINTENANCE.md` (the 
 
 1. Run `git fetch upstream`, then merge `upstream/main` into `main`. If `index.json` or `catalog.json` conflict, take either side and regenerate them in step 4; never hand-merge them.
    - **Collision rule:** upstream sometimes adds a model that we added earlier. That shows up as an add/add conflict on the same file, or as two profiles with the same `modelId` under one base. In either case keep upstream's file and remove ours. This is the only case where you delete a profile.
-2. Run `node H:\projects\RisuBard\fork\registry-candidates.mjs H:\projects\risubard-model-registry --days 60`. It lists OpenRouter models from tracked vendors that have no `openrouter` profile.
-3. For each real new model (skip legal, regional and duplicate snapshot variants unless clearly useful), **add** a profile:
-   - Copy the closest sibling profile in `profiles/openrouter/` (same vendor and family). Then set `id`, `displayName`, `displayNameI18n.ko`, `description`, `descriptionI18n.ko`, `modelId`, `sortOrder`, `capabilities`, `limits`, `recommendedTokenizer`, `profileStatus: "current"`, and `updatedAt` (the current time in ms).
-   - Take capabilities and limits from OpenRouter `/api/v1/models`, using the mapping table in the registry's MAINTENANCE.md.
+2. Run `node H:\projects\RisuBard\fork\registry-candidates.mjs H:\projects\risubard-model-registry --days 60`. It prints one list per gateway: models from tracked vendors that the gateway serves but that have no profile in that gateway's folder.
+   - `[openrouter]`: compared with `profiles/openrouter/`, using data from `https://openrouter.ai/api/v1/models`.
+   - `[vercel]`: compared with `profiles/vercel/`, using data from `https://ai-gateway.vercel.sh/v1/models`. Batch-API (`-batch`) variants are already filtered out.
+   - If one source prints `FAILED`, do the other source and report the failure.
+3. For each real new model, **add** a profile in that gateway's folder: `profiles/openrouter/` for an `[openrouter]` candidate and `profiles/vercel/` for a `[vercel]` one.
+   - **Skip:**
+     - Legal, regional and duplicate dated-snapshot variants, unless clearly useful.
+     - Vercel speed tiers of a model that already has a profile (`-fast`, `-highspeed`, `-ultrafast`). List them in the report instead.
+   - **Copying:** copy the closest sibling profile in the same folder (same vendor and family). Then set `id` (`<gateway>:<key>`), `displayName`, `displayNameI18n.ko`, `description`, `descriptionI18n.ko`, `modelId` (the gateway's model ID exactly), `sortOrder`, `capabilities`, `limits`, `recommendedTokenizer`, `profileStatus: "current"`, and `updatedAt` (the current time in ms). Keep the sibling's `endpoint`, `auth`, `tags` style and `sourceUrls`.
+   - **OpenRouter fields:** take capabilities and limits from `/api/v1/models`, using the mapping table in the registry's MAINTENANCE.md.
+   - **Vercel fields:**
+     - `contextWindowTokens` comes from `context_window`, and `maxOutputTokens` from `max_tokens`.
+     - Capabilities come from `tags` and `supported_parameters`:
+       - `reasoning` from the `reasoning` tag or the `reasoning` parameter
+       - `vision` from the `vision` tag or image input
+       - `tools` from `tool-use` or `tools`
+       - `json` from `structured-output` or `response_format`
+       - `streaming` always
+     - Vercel has no tokenizer field. Use the sibling's `recommendedTokenizer`, or the same model's OpenRouter profile if there is one.
+   - **Model in both gateways:** add it to each folder; the two profiles are independent.
    - For major-vendor models (Anthropic, OpenAI, Google), also add the vendor-direct profile (`profiles/anthropic`, `profiles/openai`, `profiles/google`) by copying the newest sibling of the same family. Confirm the exact model ID on the vendor's docs or models page. If you cannot confirm it, skip the direct profile and note it in the report.
    - Never edit or delete existing profiles unattended. Report suspected stale ones instead.
 4. Run `node scripts/build.mjs`, then `node scripts/validate.mjs`. Validation must pass.
