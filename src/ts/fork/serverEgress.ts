@@ -95,6 +95,12 @@ export async function waitForAuth(
 
 const AUTH_WAIT_MS = 15_000
 
+let egressCounter = 0
+function egressNonce(): string {
+    egressCounter = (egressCounter + 1) % Number.MAX_SAFE_INTEGER
+    return `${Date.now().toString(36)}-${egressCounter.toString(36)}`
+}
+
 export function createServerEgressFetch(
     nativeFetch: typeof fetch,
     pageOrigin: string,
@@ -157,11 +163,16 @@ export function createServerEgressFetch(
             proxyHeaders['Content-Type'] = 'application/octet-stream'
         }
 
-        return nativeFetch(PROXY_PATH, {
+        // Every proxied request goes to the same path and differs only in the
+        // risu-url header, so a cached GET /proxy2 response would be served for
+        // a different target (catalog.json answered with index.json). Never let
+        // the browser or the service worker cache these.
+        return nativeFetch(`${PROXY_PATH}?egress=${egressNonce()}`, {
             method,
             headers: proxyHeaders,
             body: body && body.byteLength > 0 ? body : undefined,
             signal,
+            cache: 'no-store',
         })
     }) as typeof fetch
 }

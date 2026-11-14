@@ -60,7 +60,7 @@ describe('createServerEgressFetch', () => {
 
         expect(calls).toHaveLength(1)
         const { input, init } = calls[0]
-        expect(input).toBe('/proxy2')
+        expect(String(input)).toContain('/proxy2?egress=')
         expect(init?.method).toBe('POST')
         expect(decodeHeader(init, 'risu-url')).toBe('https://api.openai.com/v1/chat/completions')
         const forwarded = forwardedHeaders(init)
@@ -103,7 +103,7 @@ describe('createServerEgressFetch', () => {
         await vi.advanceTimersByTimeAsync(1_000)
         await pending
         vi.useRealTimers()
-        expect(calls[0].input).toBe('/proxy2')
+        expect(String(calls[0].input)).toContain('/proxy2?egress=')
         expect((calls[0].init?.headers as Record<string, string>)['risu-auth']).toBe('late-token')
     })
 
@@ -124,13 +124,23 @@ describe('createServerEgressFetch', () => {
         expect(calls).toHaveLength(1)
     })
 
+    it('gives every proxied request its own uncached address', async () => {
+        const { fn, calls } = recordingFetch()
+        const egress = createServerEgressFetch(fn, ORIGIN, async () => 'auth')
+        await egress('https://example.test/index.json')
+        await egress('https://example.test/catalog.json')
+        expect(calls[0].input).not.toBe(calls[1].input)
+        expect(calls[0].init?.cache).toBe('no-store')
+        expect(calls[1].init?.cache).toBe('no-store')
+    })
+
     it('sends GET requests without a body and forwards the abort signal', async () => {
         const { fn, calls } = recordingFetch()
         const egress = createServerEgressFetch(fn, ORIGIN, async () => 'auth')
         const controller = new AbortController()
         await egress('https://openrouter.ai/api/v1/models', { signal: controller.signal })
 
-        expect(calls[0].input).toBe('/proxy2')
+        expect(String(calls[0].input)).toContain('/proxy2?egress=')
         expect(calls[0].init?.method).toBe('GET')
         expect(calls[0].init?.body).toBeUndefined()
         expect(calls[0].init?.signal).toBe(controller.signal)
