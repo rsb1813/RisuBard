@@ -13,6 +13,7 @@ import { language } from "../../lang";
 import { alertConfirmMulti, alertError, notifyError } from "../alert";
 import { parseChatML } from "../parser/chatML";
 import { loadLoreBookV3Prompt } from "./lorebook.svelte";
+import { isStableAlwaysActiveLore, resolveStableLoreIndex } from "./lorebookStablePrefix";
 import { findCharacterbyId, getPersonaPrompt, getUserName, isLastCharPunctuation, trimUntilPunctuation, parseToggleSyntax, prebuiltAssetCommand, sleep } from "../util";
 import { requestChatData } from "./request/request";
 import { getPartialPresetStreamText } from './request/presetStreamPump';
@@ -2644,8 +2645,18 @@ export async function sendChat(chatProcessIndex = -1,arg:{
     })
     console.log(normalActives)
 
+    // Experimental: always-active lore goes in front of the chat history so it
+    // stays inside the cacheable prefix (see lorebookStablePrefix.ts).
+    const stableLoreIndex = requestSettings.loreAlwaysActiveBeforeChat
+        ? resolveStableLoreIndex(promptTemplate)
+        : -1
+    const stableLorePrompts: OpenAIChat[] = []
+
     for(const lorebook of normalActives){
-        unformated.lorebook.push(setRequestStatusSource({
+        const target = stableLoreIndex >= 0 && isStableAlwaysActiveLore(lorebook)
+            ? stableLorePrompts
+            : unformated.lorebook
+        target.push(setRequestStatusSource({
             role: lorebook.role,
             content: parseGenerationText(resolvePosition(lorebook.prompt), {chara: currentChar})
         }, lorebook.requestStatusKind, lorebook.source))
@@ -2803,6 +2814,7 @@ export async function sendChat(chatProcessIndex = -1,arg:{
             }
         }
 
+        let stableLoreTokenized = false
         for(const card of template){
             switch(card.type){
                 case 'persona':{
@@ -2842,6 +2854,10 @@ export async function sendChat(chatProcessIndex = -1,arg:{
                 }
                 case 'lorebook':{
                     await tokenizeChatArray(unformated.lorebook)
+                    if(!stableLoreTokenized){
+                        stableLoreTokenized = true
+                        await tokenizeChatArray(stableLorePrompts)
+                    }
                     break
                 }
                 case 'postEverything':{
@@ -3350,7 +3366,11 @@ export async function sendChat(chatProcessIndex = -1,arg:{
     if(promptTemplate){
         const template = promptTemplate
 
+        let templateCardIndex = -1
         for(const card of template){
+            if(++templateCardIndex === stableLoreIndex){
+                pushPrompts(stableLorePrompts, { kind: 'lorebook' })
+            }
             switch(card.type){
                 case 'persona':{
                     let pmt = safeStructuredClone(unformated.personaPrompt)
