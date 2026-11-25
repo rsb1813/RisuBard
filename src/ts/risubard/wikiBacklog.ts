@@ -100,3 +100,47 @@ export function summarizeWikiBacklog(messages: readonly WikiBacklogMessage[]): {
         },
     }
 }
+
+/**
+ * Whether queued turns were cut off rather than refused: each one is either
+ * still waiting or failed after `hiddenSince`, while the app was out of view
+ * and losing the connection is expected. Turns that failed in view keep
+ * waiting for the next reply, so a real error is not retried on every return.
+ */
+export function wikiBacklogInterrupted(
+    queued: readonly WikiBacklogMessage[],
+    hiddenSince?: string,
+): boolean {
+    return queued.length > 0 && queued.every((message) => {
+        const pending = message.risubardWikiPending
+        if (!pending?.reason) return true
+        return hiddenSince !== undefined && (pending.failedAt ?? '') >= hiddenSince
+    })
+}
+
+/** The turn whose catch-up prompt was shown but not answered yet. */
+export interface WikiGapPrompt {
+    characterId: string
+    chatId: string
+    targetMessageId: string
+}
+
+/** How long an unanswered catch-up prompt is kept to be asked again. */
+export const WIKI_GAP_PROMPT_TTL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Reads a stored WikiGapPrompt, or undefined when it is missing, malformed, or
+ * older than WIKI_GAP_PROMPT_TTL_MS (its `at` is when the prompt was shown).
+ */
+export function parseWikiGapPrompt(raw: string | null | undefined, now = Date.now()): WikiGapPrompt | undefined {
+    if (!raw) return undefined
+    try {
+        const value = JSON.parse(raw) as Partial<Record<keyof WikiGapPrompt | 'at', unknown>> | null
+        if (!value || typeof value.characterId !== 'string' || typeof value.chatId !== 'string'
+            || typeof value.targetMessageId !== 'string' || typeof value.at !== 'number'
+            || !(now - value.at < WIKI_GAP_PROMPT_TTL_MS)) return undefined
+        return { characterId: value.characterId, chatId: value.chatId, targetMessageId: value.targetMessageId }
+    } catch {
+        return undefined
+    }
+}

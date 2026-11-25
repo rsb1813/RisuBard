@@ -60,9 +60,11 @@
     import { copyWikiDocumentToLorebook } from 'src/ts/risubard/wikiLorebookCopy'
     import { normalizeMemoryWikiTreeHeight, normalizeMemoryWikiTreeWidth } from 'src/ts/risubard/memoryWikiLayout'
     import { rankWikiLinkCandidates, relinkWikiLink } from 'src/ts/risubard/wikiLinkRepair'
+    import { eventSequences as eventSequenceMap } from '../../../server/node/risubard-event-sequence'
     import { formatStoryTimeLabel } from '../../../server/node/risubard-memory-metadata'
     import type { StorySourceRef } from 'src/ts/risubard/storySoFar'
-    import { createEventOrder, type EventOrderMessage } from 'src/ts/risubard/eventOrder'
+    import { createEventOrder, createEventTurnLabels, type EventOrderMessage } from 'src/ts/risubard/eventOrder'
+    import { language } from 'src/lang'
 
     // Catalog entries from the dock carry no body until it has been fetched.
     type WikiDocument = WikiCatalogDocument
@@ -305,6 +307,7 @@
         })
         renderer.use(wikiLinkPlugin, {
             resolve: wikiLinkPresentation,
+            eventMarkTarget: (sequence) => eventIdsBySequence.get(sequence) ?? undefined,
         })
         if (searchQuery) {
             renderer.renderer.rules.text = (tokens, index) =>
@@ -338,9 +341,32 @@
         }
     }
 
-    let eventSequences = $derived(new Map(documents
-        .filter((document) => document.type === 'event' && document.sequence !== undefined)
-        .map((document) => [document.id, document.sequence!])))
+    // Same numbering the analysis prompts use, so older events without a stored number match their (#N) marks.
+    // Retracted events are left out of it but keep their stored number in the tree.
+    let activeEventSequences = $derived(eventSequenceMap(documents))
+    let eventSequences = $derived(new Map([
+        ...documents
+            .filter((document) => document.type === 'event' && document.sequence !== undefined)
+            .map((document) => [document.id, document.sequence!] as const),
+        ...activeEventSequences,
+    ]))
+    let eventIdsBySequence = $derived.by(() => {
+        const ids = new Map<number, string | null>()
+        for (const [id, sequence] of activeEventSequences) ids.set(sequence, ids.has(sequence) ? null : id)
+        return ids
+    })
+    // Events show the chat turn they came from. Events whose source is not in this chat
+    // (inherited from another chat, saved without sources) keep their old #sequence.
+    let eventTurns = $derived.by(() => {
+        const turnOf = createEventTurnLabels(messages)
+        return new Map(documents.flatMap((document): (readonly [string, string])[] => {
+            if (document.type !== 'event') return []
+            const turn = turnOf(document.sourceMessageIds)
+            if (turn) return [[document.id, `${language.chatTurnLabel} ${turn}`] as const]
+            const sequence = eventSequences.get(document.id)
+            return sequence !== undefined ? [[document.id, `#${sequence}`] as const] : []
+        }))
+    })
     let repairCandidates = $derived(linkRepair
         ? rankWikiLinkCandidates(linkRepair.target,
             documents.filter((document) => document.id !== linkRepair!.sourceId), 4)
@@ -352,9 +378,9 @@
         wikiLinkDiagnostic = null
     }
 
-    function candidateLabel(document: { id: string; title: string; sequence?: number }): string {
-        const sequence = eventSequences.get(document.id) ?? document.sequence
-        return sequence === undefined ? document.title : `#${sequence} ${document.title}`
+    function candidateLabel(document: { id: string; title: string }): string {
+        const turn = eventTurns.get(document.id)
+        return turn === undefined ? document.title : `${turn} ${document.title}`
     }
 
     /** Points the open document's missing link at another document and saves a clean page at once. */
@@ -1128,7 +1154,8 @@
                                     >
                                         {#if child.readOnly}<FileLock2Icon size={13} />
                                         {:else}<FileIcon size={13} />{/if}
-                                        {#if eventSequences.has(child.documentId)}<span class="event-sequence" data-wiki-event-sequence>#{eventSequences.get(child.documentId)}</span>{/if}
+                                        {#if eventTurns.has(child.documentId)}<span class="event-sequence" data-wiki-event-turn
+                                            title={eventTurns.get(child.documentId)?.startsWith('#') ? '이 챗에 원문이 없는 사건의 저장 순번' : '이 사건의 원문이 있는 챗 턴'}>{eventTurns.get(child.documentId)}</span>{/if}
                                         <span class="document-title" class:context-excluded={contextModes.get(child.documentId) === 'never'} title={child.title}>{child.title}</span>
                                         {@render contextBadge(child.documentId)}
                                         {@render recentUpdateBadge(child.documentId)}
@@ -1842,32 +1869,43 @@
         .wiki-editor.mobile-layout .tree-width-resizer,
         .wiki-editor.mobile-layout .editor-panel-header { display: none; }
         .wiki-editor.mobile-layout .editor-pane { display: flex; grid-row: 2; min-height: 0; overflow: hidden; }
+        /* Labels sit beside their inputs, so the three fields take two short rows
+           and leave the height to the document body. */
         .wiki-editor.mobile-layout .editor-title-row {
             display: grid;
-            grid-template-columns: minmax(6.5rem, .72fr) minmax(0, 1.28fr);
-            gap: .45rem;
-            padding: .5rem .6rem;
+            grid-template-columns: minmax(7.5rem, .8fr) minmax(0, 1.6fr);
+            gap: .3rem .45rem;
+            padding: .35rem .6rem;
         }
         .wiki-editor.mobile-layout .editor-title-row .aliases-field { grid-column: 1 / -1; }
-        .wiki-editor.mobile-layout .editor-title-row:has(> .document-info) { grid-template-columns: auto minmax(6.5rem, .72fr) minmax(0, 1.28fr); }
-        .wiki-editor.mobile-layout .document-info-button { width: 2.75rem; height: 2.75rem; }
+        .wiki-editor.mobile-layout .editor-title-row:has(> .document-info) { grid-template-columns: auto minmax(7.5rem, .8fr) minmax(0, 1.6fr); }
+        .wiki-editor.mobile-layout .editor-title-row label { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: .4rem; }
+        .wiki-editor.mobile-layout .document-info { align-self: center; }
+        .wiki-editor.mobile-layout .document-info-button { width: 2rem; height: 2rem; }
         .wiki-editor.mobile-layout .editor-title-row select,
         .wiki-editor.mobile-layout .editor-title-row input {
-            min-height: 2.75rem;
+            height: 2rem;
+            min-height: 2rem;
+            padding-block: 0;
+            /* 16px keeps mobile browsers from zooming into the field on focus. */
             font-size: 1rem;
+            line-height: 1.2;
         }
         .wiki-editor.mobile-layout .editor-actions {
             width: 100%;
-            flex-wrap: wrap;
-            overflow-x: visible;
+            flex-wrap: nowrap;
+            overflow-x: auto;
             align-items: center;
-            justify-content: flex-end;
-            gap: .35rem;
+            justify-content: safe flex-end;
+            gap: .2rem;
             margin-left: 0;
-            padding: .4rem .6rem;
+            padding: .25rem .5rem;
             scrollbar-width: thin;
         }
-        .wiki-editor.mobile-layout .editor-actions :global(button) { min-height: 2.75rem; }
+        .wiki-editor.mobile-layout .editor-actions :global(button) { height: 2rem; min-height: 2rem; }
+        /* Icon only on phones; the button keeps its aria-label and title. */
+        .wiki-editor.mobile-layout .editor-actions .editor-source-action :global(button) { width: 2rem; padding-inline: .35rem; }
+        .wiki-editor.mobile-layout .editor-actions :global([data-wiki-source-label]) { display: none; }
         .wiki-editor.mobile-layout .document-meta { flex-wrap: wrap; gap: .35rem .6rem; }
         .wiki-editor.mobile-layout .markdown-editor,
         .wiki-editor.mobile-layout .markdown-preview {
