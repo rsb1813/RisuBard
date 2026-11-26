@@ -84,7 +84,9 @@
                 try {
                     // The Auto Translation checkbox is hidden while Translator Language is
                     // Disabled (''), so a stale autoTranslate must not keep translating.
-                    if(DBState.db.autoTranslate && DBState.db.translator){
+                    // fork: auto translation leaves the user's own messages as written;
+                    // the per-message translate button still works on them.
+                    if(DBState.db.autoTranslate && DBState.db.translator && role !== 'user'){
                         if(DBState.db.autoTranslateCachedOnly && DBState.db.translatorType === 'llm'){
                             const cache = DBState.db.translateBeforeHTMLFormatting
                             ? await getLLMCache(data)

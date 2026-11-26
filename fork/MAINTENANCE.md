@@ -21,7 +21,7 @@ file. It does two jobs:
 
 ## The fork patch (keep it this small)
 
-Upstream files touched: `src/main.ts` (1 line), `src/ts/process/index.svelte.ts` (2 lines), and `server/node/server.cjs` (2 lines). Everything else is in fork-only files.
+Upstream files touched: `src/main.ts` (1 line), `src/ts/process/index.svelte.ts` (2 lines), `src/lib/ChatScreens/ChatBody.svelte` (1 condition plus a comment), and `server/node/server.cjs` (2 lines). Everything else is in fork-only files.
 
 | File | What it does |
 |---|---|
@@ -32,6 +32,7 @@ Upstream files touched: `src/main.ts` (1 line), `src/ts/process/index.svelte.ts`
 | `src/ts/fork/bardwikiServer/*` (+ tests) | The Node side. `entry.ts` is bundled to `server/node/fork/dist/bardwiki-runner.cjs`. `modelCall.ts` calls the model with the same adapters the browser uses. `nodeContext.ts` handles loopback self-calls and server-minted auth. `nodeStubs/` holds Node stand-ins for browser-only modules. |
 | `server/node/fork/bardwiki-jobs.cjs` (+ test) | Routes for `/api/fork/bardwiki/jobs`. It holds jobs in memory and runs one job per chat at a time. |
 | `server/node/server.cjs` | Two lines after `modelJobs.registerRoutes(...)`: a comment and `require('./fork/bardwiki-jobs.cjs').createBardWikiJobs(...).registerRoutes(app);` |
+| `src/lib/ChatScreens/ChatBody.svelte` | The auto-translate check gains `&& role !== 'user'`, so auto translation leaves the user's own messages untranslated. The per-message translate button still translates them. `src/ts/fork/forkPatches.test.ts` fails if a merge drops the condition. |
 | `fork/*` | This tooling. `fork/vite.bardwiki-server.config.ts` builds the server bundle, and `fork/build.sh` builds the frontend and the server bundle. |
 
 What the patch does and does not do:
@@ -106,6 +107,7 @@ Work in `H:\projects\RisuBard`.
 5. Write `<LATEST>` into `fork/UPSTREAM_TAG` and commit on the sync branch.
 6. Check what the release changed that touches the patch:
    - `src/main.ts` (is the import still first after the polyfill?)
+   - `src/lib/ChatScreens/ChatBody.svelte` (the auto-translate `if` in `markParsing`; if upstream rewrote it, re-add `role !== 'user'` and update `forkPatches.test.ts`)
    - `src/ts/globalApi.svelte.ts` (`fetchNative`, `fetchViaProxy2`, `fetchWithProxy`)
    - `server/node/server.cjs` (`reverseProxyFunc`, the `/proxy2` routes, the `express.raw` octet-stream parser)
    - `src/ts/preset/registry/remote.ts` (does the official registry URL still start with the `UPSTREAM_REGISTRY_BASE` in `serverEgress.ts`?)
